@@ -715,3 +715,12 @@ export interface GasStationPrice {
 
   gasPriceRange: { [key: string]: number };
 }
+
+/** Response object for the {@link TransactNamespace.sendReinforcedTransaction} method. */
+export interface SendRawTransactionResponse {
+  /** The job id. This is used to ..... */
+  transactionJobId: number;
+
+  /* An array of the transaction hashes from the different options */
+  transactionHashes: string[];
+}

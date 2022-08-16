@@ -1,11 +1,19 @@
 import { AlchemyConfig } from './alchemy-config';
-import { GasStationPrice, SendPrivateTransactionOptions } from '../types/types';
-import { toHex } from './util';
+import {
+  GasStationPrice,
+  SendPrivateTransactionOptions,
+  SendRawTransactionResponse
+} from '../types/types';
+import { fromHex, toHex } from './util';
 import {
   TransactionReceipt,
+  TransactionRequest,
   TransactionResponse
 } from '@ethersproject/abstract-provider';
 import axios, { AxiosRequestConfig, AxiosResponse } from 'axios';
+import { Deferrable } from '@ethersproject/properties';
+import type { BigNumber } from '@ethersproject/bignumber';
+import { Wallet } from './alchemy-wallet';
 
 export class TransactNamespace {
   constructor(private readonly config: AlchemyConfig) {}
@@ -104,6 +112,92 @@ export class TransactNamespace {
   }
 
   /**
+   * Returns an estimate of the amount of gas that would be required to submit
+   * transaction to the network.
+   *
+   * An estimate may not be accurate since there could be another transaction on
+   * the network that was not accounted for, but after being mined affects the
+   * relevant state.
+   *
+   * This is an alias for {@link CoreNamespace.estimateGas}.
+   *
+   * @param transaction The transaction to estimate gas for.
+   * @public
+   */
+  async estimateGas(
+    transaction: Deferrable<TransactionRequest>
+  ): Promise<BigNumber> {
+    const provider = await this.config.getProvider();
+    return provider.estimateGas(transaction);
+  }
+
+  /**
+   * Returns a fee per gas (in wei) that is an estimate of how much you can pay
+   * as a priority fee, or "tip", to get a transaction included in the current block.
+   *
+   * This number is generally used to set the `maxPriorityFeePerGas` field in a
+   * transaction request.
+   *
+   * @public
+   */
+  async getMaxPriorityFeePerGas(): Promise<number> {
+    const provider = await this.config.getProvider();
+    const feeHex = await provider._send(
+      'eth_maxPriorityFeePerGas',
+      [],
+      'getMaxPriorityFeePerGas'
+    );
+    return fromHex(feeHex);
+  }
+
+  /**
+   * Submits a series of signed transaction to Alchemy's nodes.
+   *
+   * @param signedTransactions
+   */
+  async sendReinforcedTransaction(
+    signedTransactions: string[]
+  ): Promise<SendRawTransactionResponse> {
+    const provider = await this.config.getProvider();
+    return provider._send(
+      'alchemy_sendRawTransaction',
+      [
+        {
+          serializedTransactions: signedTransactions
+        }
+      ],
+      'sendReinforcedTransaction'
+    );
+  }
+
+  /**
+   * @param transaction
+   * @param wallet
+   */
+  async sendAutoReinforcedTransaction(
+    transaction: TransactionRequest,
+    wallet: Wallet
+  ): Promise<SendRawTransactionResponse> {
+    let gasLimit;
+    let priorityFee;
+    try {
+      gasLimit = await this.estimateGas(transaction);
+      priorityFee = await this.getMaxPriorityFeePerGas();
+    } catch (e) {
+      throw new Error(`Failed to estimate gas for transaction: ${e}`);
+    }
+
+    const signedTransactions = await signGasTransactions(
+      transaction,
+      gasLimit,
+      priorityFee,
+      wallet
+    );
+
+    return this.sendReinforcedTransaction(signedTransactions);
+  }
+
+  /**
    * Returns a promise which will not resolve until specified transaction hash is mined.
    *
    * If {@link confirmations} is 0, this method is non-blocking and if the
@@ -148,4 +242,31 @@ export class TransactNamespace {
     const response: AxiosResponse<GasStationPrice> = await axios(config);
     return response.data;
   }
+}
+
+/**
+ * Helper method to sign the raw transaction with the given gas limit and
+ * priority fee across a spread of different gas prices.
+ */
+async function signGasTransactions(
+  transaction: TransactionRequest,
+  gasLimit: BigNumber,
+  priorityFee: number,
+  wallet: Wallet
+): Promise<string[]> {
+  const signedTransactions = [];
+  const multipliers = [0.9, 1, 1.1, 1.2, 1.3];
+  for (const feeMultiplier of multipliers) {
+    const txWithGas = {
+      ...transaction,
+      gasLimit: gasLimit.toNumber(),
+      maxPriorityFeePerGas: Math.round(feeMultiplier * priorityFee)
+    };
+    console.log(txWithGas);
+    const signedTx = await wallet.signTransaction(txWithGas);
+    signedTransactions.push(signedTx);
+  }
+  console.log(signedTransactions);
+
+  return signedTransactions;
 }
