@@ -5,6 +5,12 @@ export { Alchemy } from './api/alchemy';
 
 export { Wallet } from './api/alchemy-wallet';
 
+export {
+  BaseContract,
+  Contract,
+  ContractFactory
+} from './api/alchemy-contract';
+
 export type { AlchemyConfig } from './api/alchemy-config';
 
 export type { AlchemyProvider } from './api/alchemy-provider';
